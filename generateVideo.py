@@ -8,12 +8,18 @@ import string
 import re
 from edge_tts import Communicate
 import subprocess
+import time
+from selenium import webdriver
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.by import By
 
+# Load posts
 with open('reddit_posts.json', 'r', encoding='utf-8') as f:
     posts = json.load(f)
 
 selected_post = random.choice(posts)
 
+# Abbreviations and pattern replacements
 abbreviations = {
     'aita': 'Am I the asshole',
     'aitb': 'Am I the bastard',
@@ -32,10 +38,10 @@ abbreviations = {
 }
 
 age_gender_patterns = {
-    r'(\d{1,2})[fF]': r'\1 female',  
-    r'[fF](\d{1,2})': r'female \1',   
-    r'(\d{1,2})[mM]': r'\1 male',   
-    r'[mM](\d{1,2})': r'male \1'     
+    r'(\d{1,2})[fF]': r'\1 female',
+    r'[fF](\d{1,2})': r'female \1',
+    r'(\d{1,2})[mM]': r'\1 male',
+    r'[mM](\d{1,2})': r'male \1'
 }
 
 for abbrev, full in abbreviations.items():
@@ -51,6 +57,7 @@ story_title = selected_post['title']
 
 print(f"Selected Post: {story_title}")
 
+# Load Whisper model
 model = whisper.load_model("base")
 
 def remove_punctuation(text):
@@ -63,13 +70,13 @@ def generate_srt(transcription, filename):
     for segment in transcription:
         for word_info in segment['words']:
             word = word_info['word']
-            word_no_punctuation = remove_punctuation(word) 
+            word_no_punctuation = remove_punctuation(word)
             start_time = word_info['start']
             end_time = word_info['end']
-            
+
             start_srt_time = format_srt_time(start_time)
             end_srt_time = format_srt_time(end_time)
-            
+
             srt_content.append(f"{counter}\n{start_srt_time} --> {end_srt_time}\n{word_no_punctuation.strip()}\n")
             counter += 1
 
@@ -86,9 +93,7 @@ def format_srt_time(seconds):
 
 def transcribe_audio_to_srt(audio_file, srt_file):
     result = model.transcribe(audio_file, word_timestamps=True)
-
     transcription_segments = result['segments']
-
     generate_srt(transcription_segments, srt_file)
 
 def split_text_into_segments(story_text, words_per_minute=150, max_duration_seconds=40):
@@ -108,7 +113,6 @@ def split_text_into_segments(story_text, words_per_minute=150, max_duration_seco
 
     return segments
 
-
 english_voices = [
     "en-AU-NatashaNeural", "en-AU-WilliamNeural", "en-CA-ClaraNeural", "en-CA-LiamNeural",
     "en-IE-ConnorNeural", "en-IE-EmilyNeural", "en-NZ-MitchellNeural", "en-NZ-MollyNeural",
@@ -122,9 +126,7 @@ random_voice = random.choice(english_voices)
 
 async def generate_speech_with_title(text, part_number, audio_filename='story_audio.mp3'):
     text_with_part = f"{story_title}, Part {part_number}. {text}"
-
     gen = Communicate(text_with_part, voice=random_voice)
-
     async for chunk in gen.stream():
         if chunk["type"] == "audio":
             with open(audio_filename, "ab") as audio_file:
@@ -134,66 +136,78 @@ def create_video_for_audio_part(gameplay_file, audio_file, part_number):
     try:
         audio_clip = AudioFileClip(audio_file)
         audio_duration = audio_clip.duration
-
         gameplay_clip = VideoFileClip(gameplay_file)
         gameplay_duration = gameplay_clip.duration
 
         max_start_time = gameplay_duration - audio_duration
-        if max_start_time <= 0:
-            start_time = 0
-        else:
-            start_time = random.uniform(0, max_start_time)
+        start_time = 0 if max_start_time <= 0 else random.uniform(0, max_start_time)
 
         video_segment_output = f"gameplay_segment_part_{part_number}.mp4"
-        ffmpeg_command_1 = [
-            'ffmpeg',
-            '-y',
-            '-ss', str(start_time), 
-            '-i', gameplay_file,  
-            '-t', str(audio_duration), 
-            '-vf', 'scale=-1:1080,crop=608:1080',  
-            '-r', '24',  
-            '-an',  
-            '-c:v', 'libx264', 
-            video_segment_output  
-        ]
-        subprocess.run(ffmpeg_command_1, check=True)
+        subprocess.run([
+            'ffmpeg', '-y', '-ss', str(start_time), '-i', gameplay_file, '-t', str(audio_duration),
+            '-vf', 'scale=-1:1080,crop=608:1080', '-r', '24', '-an', '-c:v', 'libx264', video_segment_output
+        ], check=True)
 
         final_video_output = f"no_subtitles_output_video_part_{part_number}.mp4"
-        ffmpeg_command_2 = [
-            'ffmpeg',
-            '-y', 
-            '-i', video_segment_output,  
-            '-i', audio_file,  
-            '-map', '0:v:0', 
-            '-map', '1:a:0', 
-            '-c:v', 'copy', 
-            '-c:a', 'copy', 
-            '-shortest',  
-            final_video_output  
-        ]
-        subprocess.run(ffmpeg_command_2, check=True)
+        subprocess.run([
+            'ffmpeg', '-y', '-i', video_segment_output, '-i', audio_file, '-map', '0:v:0',
+            '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'copy', '-shortest', final_video_output
+        ], check=True)
 
         return final_video_output
 
     finally:
-        try:
-            audio_clip.close()
-            gameplay_clip.close()
-        except Exception as e:
-            print(f"Error closing resources: {e}")
-            
+        audio_clip.close()
+        gameplay_clip.close()
+
 def add_subtitles_to_video(video_file, subtitle_file, part_number, font_path):
     output_file = f"final_part_{part_number}.mp4"
-    ffmpeg_command = [
-        'ffmpeg',
-        '-i', video_file,
-        '-vf', f"subtitles={subtitle_file}:force_style='FontName={font_path},FontSize=32,PrimaryColour=&HFFFFFF&,Outline=2,OutlineColour=&H00000000&,Alignment=10,MarginV=0'",
-        '-c:a', 'copy',
-        output_file
-    ]
-    subprocess.run(ffmpeg_command)
+    subprocess.run([
+        'ffmpeg', '-i', video_file, '-vf', f"subtitles={subtitle_file}:force_style='FontName={font_path},FontSize=32,PrimaryColour=&HFFFFFF&,Outline=2,OutlineColour=&H00000000&,Alignment=10,MarginV=0'", '-c:a', 'copy', output_file
+    ])
     return output_file
+
+# Youtube upload function
+def uploadToYoutube(threadID):
+    options = webdriver.ChromeOptions()
+    options.add_argument("--log-level=3")
+    options.add_argument("user-data-dir=C:\\Users\\ASAFM\\AppData\\Local\\Google\\Chrome\\User Data\\Profile 16")
+    options.binary_location = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+
+    bot = webdriver.Chrome(executable_path=ChromeDriverManager().install(), chrome_options=options)
+    bot.get('https://studio.youtube.com')
+    time.sleep(4)
+
+    uploadButton = bot.find_element(By.XPATH, '//*[@id="upload-icon"]')
+    uploadButton.click()
+    time.sleep(4)
+
+    path = f'{threadID}.mp4'
+    fileUploader = bot.find_element(By.XPATH, '//*[@id="content"]/input')
+    fileUploader.send_keys(os.path.abspath(path))
+    time.sleep(10)
+
+    title = bot.find_element(By.XPATH, '//*[@id="title-textarea"]')
+    title.send_keys('#Shorts #reddit #redditstories #story #fyp')
+    time.sleep(4)
+
+    notMadeForKids = bot.find_element(By.XPATH, '//*[@name="VIDEO_MADE_FOR_KIDS_NOT_MFK"]')
+    notMadeForKids.click()
+    time.sleep(4)
+
+    nextButton = bot.find_element(By.XPATH, '//*[@id="next-button"]')
+    for i in range(4):
+        nextButton.click()
+        time.sleep(4)
+
+    public = bot.find_element(By.XPATH, '//*[@name="PUBLIC"]')
+    public.click()
+    time.sleep(4)
+
+    doneButton = bot.find_element(By.XPATH, '//*[@id="done-button"]')
+    doneButton.click()
+    time.sleep(4)
+    bot.quit()
 
 async def full_workflow():
     # Step 1: Split the story text into segments
@@ -225,15 +239,17 @@ async def full_workflow():
 
         transcribe_audio_to_srt(audio_filename, srt_filename)
 
-        # final_video_with_subtitles = add_subtitles_to_video(video_without_subtitles, srt_filename, part_number, "Bangers")
         final_video_with_subtitles = add_subtitles_to_video(video_without_subtitles, srt_filename, part_number, "Granby Elephant Pro")
+
+        # Upload each video to YouTube
+        uploadToYoutube(f"final_part_{part_number}")
 
         intermediate_files.append(srt_filename)
 
+    # Clean up intermediate files
     for file in intermediate_files:
         if os.path.exists(file):
             os.remove(file)
             print(f"Deleted intermediate file: {file}")
-
 
 asyncio.run(full_workflow())
