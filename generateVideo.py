@@ -91,14 +91,15 @@ def transcribe_audio_to_srt(audio_file, srt_file):
 
     generate_srt(transcription_segments, srt_file)
 
-def split_text_into_segments(story_text, min_word_count_per_part=150):
+def split_text_into_segments(story_text, words_per_minute=150, max_duration_seconds=52):
+    max_word_count_per_part = int((words_per_minute / 60) * max_duration_seconds)
     words = story_text.split()
     segments = []
     current_segment = []
 
     for word in words:
         current_segment.append(word)
-        if len(current_segment) >= min_word_count_per_part:
+        if len(current_segment) >= max_word_count_per_part:
             segments.append(' '.join(current_segment))
             current_segment = []
 
