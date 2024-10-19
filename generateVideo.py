@@ -196,7 +196,7 @@ def uploadToYoutube(threadID):
     time.sleep(4)
 
     nextButton = bot.find_element(By.XPATH, '//*[@id="next-button"]')
-    for i in range(4):
+    for i in range(3):
         nextButton.click()
         time.sleep(4)
 
@@ -214,8 +214,8 @@ async def full_workflow():
     segment_texts = split_text_into_segments(story_text)
     num_segments = len(segment_texts)
 
-    # List to store intermediate files for cleanup later
-    intermediate_files = []
+    # List to store all generated files for later deletion
+    all_files = []
 
     # Step 2: Generate audio and create videos without subtitles for each part
     for i, segment_text in enumerate(segment_texts):
@@ -228,7 +228,7 @@ async def full_workflow():
 
         create_video_for_audio_part("gameplay.mp4", audio_filename, part_number)
 
-        intermediate_files.extend([audio_filename, video_without_subtitles, gameplay_segment_output])
+        all_files.extend([audio_filename, video_without_subtitles, gameplay_segment_output])
 
     # Step 3: Generate subtitles and burn into videos for each part
     for i in range(num_segments):
@@ -241,15 +241,17 @@ async def full_workflow():
 
         final_video_with_subtitles = add_subtitles_to_video(video_without_subtitles, srt_filename, part_number, "Granby Elephant Pro")
 
-        # Upload each video to YouTube
+        all_files.append(final_video_with_subtitles)
+
         uploadToYoutube(f"final_part_{part_number}")
 
-        intermediate_files.append(srt_filename)
+        all_files.append(srt_filename)
 
-    # Clean up intermediate files
-    for file in intermediate_files:
+    # Step 4: Clean up all generated files
+    for file in all_files:
         if os.path.exists(file):
             os.remove(file)
-            print(f"Deleted intermediate file: {file}")
+            print(f"Deleted file: {file}")
 
-asyncio.run(full_workflow())
+while True:
+    asyncio.run(full_workflow())
